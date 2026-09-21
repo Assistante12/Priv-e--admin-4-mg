@@ -242,6 +242,7 @@ export const getSettings = createServerFn({ method: "GET" })
       record.facebook_app_id = record.facebook_app_id || customKeys.facebook_app_id || "";
       record.facebook_app_secret = record.facebook_app_secret || customKeys.facebook_app_secret || "";
       record.facebook_verify_token = record.facebook_verify_token || customKeys.facebook_verify_token || "";
+      (record as any).gemini_api_key = (record as any).gemini_api_key || customKeys.gemini_api_key || "";
       (record as any).lovable_api_key = (record as any).lovable_api_key || customKeys.lovable_api_key || "";
       (record as any).supabase_project_url = (record as any).supabase_project_url || customKeys.supabase_project_url || "";
       (record as any).supabase_anon_key = (record as any).supabase_anon_key || customKeys.supabase_anon_key || "";
@@ -283,6 +284,7 @@ const updateSettingsSchema = z.object({
   facebook_app_id: z.string().max(100).nullable().optional(),
   facebook_app_secret: z.string().max(200).nullable().optional(),
   facebook_verify_token: z.string().max(200).nullable().optional(),
+  gemini_api_key: z.string().max(500).nullable().optional(),
   lovable_api_key: z.string().max(500).nullable().optional(),
   supabase_project_url: z.string().max(500).nullable().optional(),
   supabase_anon_key: z.string().max(500).nullable().optional(),
@@ -302,6 +304,7 @@ export const updateSettings = createServerFn({ method: "POST" })
     const cleanedFbAppId = clean(data.facebook_app_id);
     const cleanedFbAppSecret = clean(data.facebook_app_secret);
     const cleanedFbVerifyToken = clean(data.facebook_verify_token);
+    const cleanedGeminiKey = clean(data.gemini_api_key);
     const cleanedLovableKey = clean(data.lovable_api_key);
     const cleanedSbUrl = clean(data.supabase_project_url);
     const cleanedSbAnon = clean(data.supabase_anon_key);
@@ -338,6 +341,7 @@ export const updateSettings = createServerFn({ method: "POST" })
         facebook_app_id: finalFbAppId,
         facebook_app_secret: finalFbAppSecret,
         facebook_verify_token: finalFbVerifyToken,
+        gemini_api_key: cleanedGeminiKey,
         lovable_api_key: cleanedLovableKey,
         supabase_project_url: cleanedSbUrl,
         supabase_anon_key: cleanedSbAnon,

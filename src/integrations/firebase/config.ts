@@ -1,43 +1,54 @@
-import { initializeApp, getApps, getApp } from "firebase/app";
-import { initializeFirestore } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
+import { initializeFirestore, getFirestore, type Firestore } from "firebase/firestore";
+import { getAuth, type Auth } from "firebase/auth";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDCH-1wDkaocH6zyoHZuqBRDYjiqllnBQQ",
-  authDomain: "gen-lang-client-0818068270.firebaseapp.com",
-  projectId: "gen-lang-client-0818068270",
-  storageBucket: "gen-lang-client-0818068270.firebasestorage.app",
-  messagingSenderId: "372695402881",
-  appId: "1:372695402881:web:ef6968a46a7c3ef5e10080",
+export const firebaseConfig = {
+  projectId: "effortless-rainfall-gf38q",
+  appId: "1:1006778088935:web:63bb754492f67d1bd85142",
+  apiKey: "AIzaSyCB3raOMB1KZT-5saVpuIYDGnB-E7UK944",
+  authDomain: "effortless-rainfall-gf38q.firebaseapp.com",
+  firestoreDatabaseId: "ai-studio-agencevirtuelle-4025dff0-0f16-4acf-aae5-334da4c38db5",
+  storageBucket: "effortless-rainfall-gf38q.firebasestorage.app",
+  messagingSenderId: "1006778088935",
 };
 
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const db = initializeFirestore(
-  app,
-  {},
-  "ai-studio-agencevirtuelle-4025dff0-0f16-4acf-aae5-334da4c38db5",
-);
-const auth = getAuth(app);
+export const FIRESTORE_DATABASE_ID = "ai-studio-agencevirtuelle-4025dff0-0f16-4acf-aae5-334da4c38db5";
 
-let adminDb: any = null;
+const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-export async function getAdminDb() {
+let db: Firestore;
+try {
+  db = initializeFirestore(app, {}, FIRESTORE_DATABASE_ID);
+} catch {
+  db = getFirestore(app, FIRESTORE_DATABASE_ID);
+}
+
+const auth: Auth = getAuth(app);
+
+let adminDbInstance: any = null;
+let adminAuthInstance: any = null;
+
+export async function getAdminDb(): Promise<Firestore> {
+  return db;
+}
+
+export async function getAdminAuth() {
   if (typeof window === "undefined") {
-    if (!adminDb) {
+    if (!adminAuthInstance) {
       try {
-        const { getApps, initializeApp } = await import("firebase-admin/app");
-        const { getFirestore } = await import("firebase-admin/firestore");
-        if (getApps().length === 0) {
-          initializeApp({
-            projectId: "gen-lang-client-0818068270",
+        const adminAppModule = await import("firebase-admin/app");
+        const adminAuthModule = await import("firebase-admin/auth");
+        if (adminAppModule.getApps().length === 0) {
+          adminAppModule.initializeApp({
+            projectId: firebaseConfig.projectId,
           });
         }
-        adminDb = getFirestore("ai-studio-agencevirtuelle-4025dff0-0f16-4acf-aae5-334da4c38db5");
+        adminAuthInstance = adminAuthModule.getAuth();
       } catch (err) {
-        console.error("Failed to initialize firebase-admin:", err);
+        console.warn("[Firebase Admin Auth] fallback:", err);
       }
     }
-    return adminDb;
+    return adminAuthInstance;
   }
   return null;
 }

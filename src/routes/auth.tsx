@@ -1,8 +1,15 @@
-// Auth route updated for Vercel deployment compatibility
 import { createFileRoute, useNavigate, useRouter, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
+import { auth } from "@/integrations/firebase/config";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updatePassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+} from "firebase/auth";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +19,6 @@ import { Bot, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/auth")({
-  
   head: () => ({
     meta: [
       { title: "Connexion — Assistante Virtuelle" },
@@ -41,33 +47,19 @@ function AuthPage() {
   useEffect(() => {
     const isRecovery =
       typeof window !== "undefined" &&
-      (window.location.hash.includes("type=recovery") ||
-        window.location.search.includes("type=recovery"));
+      (window.location.hash.includes("mode=resetPassword") ||
+        window.location.search.includes("mode=resetPassword") ||
+        window.location.hash.includes("type=recovery"));
     if (isRecovery) setRecovery(true);
 
-    const checkExisting = async () => {
-      if (isRecovery) return;
-      const { data } = await supabase.auth.getUser();
-      if (data.user) await navigate({ to: "/dashboard", replace: true });
-    };
-    checkExisting();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") setRecovery(true);
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user && !isRecovery) {
+        navigate({ to: "/dashboard", replace: true });
+      }
     });
 
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "SUPABASE_OAUTH_SUCCESS") {
-        toast.success("Connexion Supabase réussie !");
-        navigate({ to: "/dashboard" });
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
-
     return () => {
-      window.removeEventListener("message", handleMessage);
-      sub.subscription.unsubscribe();
+      unsubscribe();
     };
   }, [navigate]);
 
@@ -80,10 +72,7 @@ function AuthPage() {
     }
     setLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(target, {
-        redirectTo: `${window.location.origin}/auth`,
-      });
-      if (error) throw error;
+      await sendPasswordResetEmail(auth, target);
       toast.success("E-mail de réinitialisation envoyé. Vérifiez votre boîte de réception.");
       setForgotOpen(false);
     } catch (err: any) {
@@ -101,8 +90,8 @@ function AuthPage() {
     }
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw error;
+      if (!auth.currentUser) throw new Error("Aucun utilisateur connecté");
+      await updatePassword(auth.currentUser, newPassword);
       toast.success("Mot de passe mis à jour !");
       setRecovery(false);
       await router.invalidate();
@@ -117,11 +106,9 @@ function AuthPage() {
   const handleGoogle = async () => {
     setLoading(true);
     try {
-      const result = await lovable.auth.signInWithOAuth("google", {
-        redirect_uri: window.location.origin,
-      });
-      if (result.error) throw new Error(result.error.message ?? "Connexion Google impossible");
-      if (result.redirected) return;
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      toast.success("Connexion Google réussie !");
       await router.invalidate();
       await navigate({ to: "/dashboard", replace: true });
     } catch (err: any) {
@@ -130,7 +117,6 @@ function AuthPage() {
       setLoading(false);
     }
   };
-
 
   const handleEmail = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,31 +129,13 @@ function AuthPage() {
       const normalizedEmail = email.toLowerCase().trim();
 
       if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email: normalizedEmail,
-          password,
-          options: { emailRedirectTo: `${window.location.origin}/dashboard` },
-        });
-        if (error) throw error;
-        if (!data.session) {
-          toast.success("Compte créé. Confirmez votre adresse e-mail avant de vous connecter.");
-          setMode("signin");
-          return;
-        }
-        toast.success("Inscription réussie !");
+        await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+        toast.success("Compte Firebase créé avec succès !");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: normalizedEmail,
-          password,
-        });
-        if (error) throw error;
+        await signInWithEmailAndPassword(auth, normalizedEmail, password);
         toast.success("Connexion réussie !");
       }
 
-      const { data: verified, error: verificationError } = await supabase.auth.getUser();
-      if (verificationError || !verified.user) {
-        throw verificationError ?? new Error("La session n’a pas pu être vérifiée");
-      }
       await router.invalidate();
       await navigate({ to: "/dashboard", replace: true });
     } catch (err: any) {

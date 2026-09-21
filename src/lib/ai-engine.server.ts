@@ -1,19 +1,43 @@
-// Server-only AI engine: Lovable AI par défaut + rotation Gemini en fallback.
+// Server-only AI engine: Multi-modèles Gemini en rotation continue (> 5 modèles).
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { getAccountCustomKeys } from "@/lib/account-keys.server";
 import fs from "fs";
 import path from "path";
 
-const GEMINI_MODEL = "gemini-3.6-flash";
+export const GEMINI_ROTATION_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-3.6-flash",
+  "gemini-flash-latest",
+  "gemini-2.5-pro",
+];
+
+let geminiRotationIndex = 0;
+
+export function getGeminiRotationModelsList(): string[] {
+  return [...GEMINI_ROTATION_MODELS];
+}
+
+export function getNextGeminiRotationModel(): string {
+  const model = GEMINI_ROTATION_MODELS[geminiRotationIndex % GEMINI_ROTATION_MODELS.length];
+  geminiRotationIndex = (geminiRotationIndex + 1) % GEMINI_ROTATION_MODELS.length;
+  return model;
+}
+
+const GEMINI_MODEL = "gemini-3.8-flash";
 
 /**
- * Google a retiré gemini-1.5/2.0/2.5 pour les nouvelles clés API (404 "no longer available").
- * On remappe donc tout ancien nom de modèle vers un modèle encore servi.
+ * Valide ou remappe le nom de modèle vers les modèles Gemini supportés.
  */
 export function resolveGeminiModel(rawModel?: string | null): string {
   const m = (rawModel || "").trim().toLowerCase();
   if (!m) return GEMINI_MODEL;
-  if (/gemini-(1\.5|2\.0|2\.5)/.test(m)) {
-    return m.includes("pro") ? "gemini-pro-latest" : GEMINI_MODEL;
+  if (GEMINI_ROTATION_MODELS.includes(m)) return m;
+  if (/gemini-(1\.5|2\.0)/.test(m)) {
+    return GEMINI_MODEL;
   }
   return m;
 }
@@ -109,39 +133,34 @@ async function retryTruncatedReply(opts: {
   const retryParts: AiPart[] = [...opts.parts, { text: retryPrompt }];
   const strictPrompt = appendClarityInstructions(opts.systemPrompt);
 
-  const { data: settings } = await supabaseAdmin
-    .from("settings")
-    .select("use_lovable_ai_fallback,default_model")
-    .eq("user_id", opts.userId)
-    .maybeSingle();
-  const lovableEnabled = settings?.use_lovable_ai_fallback ?? true;
-  const modelToUse = resolveGeminiModel(settings?.default_model);
-
-  if (lovableEnabled) {
+  const customKeys = getAccountCustomKeys(opts.userId);
+  const key = customKeys.gemini_api_key || process.env.GEMINI_API_KEY;
+  if (key) {
     try {
+      const res = await callGeminiMultiModelRotation(key, strictPrompt, opts.history, retryParts);
       return {
-        raw: await callLovableAi(strictPrompt, opts.history, retryParts),
-        provider: "lovable-ai:completed",
+        raw: res.text,
+        provider: `gemini-rotation:${res.model}:completed`,
       };
     } catch (e) {
-      console.warn("[Lovable AI retry] fallback vers Gemini:", e instanceof Error ? e.message : e);
+      console.warn("[Gemini rotation retry] fallback error:", e instanceof Error ? e.message : e);
     }
   }
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const key = await pickGeminiKey(opts.userId);
-    if (!key) break;
+    const keyRecord = await pickGeminiKey(opts.userId);
+    if (!keyRecord) break;
     try {
-      const raw = await callGemini(key.api_key, strictPrompt, opts.history, retryParts, modelToUse);
-      await markKeyUsed(key.id);
-      return { raw, provider: `gemini:${key.label}:completed` };
+      const res = await callGeminiMultiModelRotation(keyRecord.api_key, strictPrompt, opts.history, retryParts);
+      await markKeyUsed(keyRecord.id);
+      return { raw: res.text, provider: `gemini-rotation:${res.model}:completed` };
     } catch (e: any) {
       const isQuota = Boolean(
         e?.isQuota ||
         (e instanceof Error && (e.message.includes("Quota") || e.message.includes("429"))),
       );
-      console.error("[Gemini retry] error", key.label, e);
-      await markKeyError(key.id, key.error_count ?? 0, isQuota, e);
+      console.error("[Gemini retry] error", keyRecord.label, e);
+      await markKeyError(keyRecord.id, keyRecord.error_count ?? 0, isQuota, e);
     }
   }
 
@@ -585,6 +604,153 @@ export function sanitizeAiResponse(text: string): string {
   return cleaned;
 }
 
+async function callGeminiSingleModel(
+  cleanKey: string,
+  systemPrompt: string,
+  contents: any[],
+  m: string,
+): Promise<string> {
+  const thinkingModes = /^gemini-3/.test(m) ? [false] : [true, false];
+  let lastError = "";
+
+  for (const disableThinking of thinkingModes) {
+    try {
+      const genConfig: Record<string, any> = { temperature: 0.1, maxOutputTokens: 1500 };
+      if (disableThinking) {
+        genConfig.thinkingConfig = { thinkingBudget: 0 };
+      }
+      const body = {
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents,
+        generationConfig: genConfig,
+      };
+
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${cleanKey}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+        },
+      );
+
+      if (!res.ok) {
+        const t = await res.text();
+        if (
+          disableThinking &&
+          (t.includes("thinkingConfig") ||
+            t.includes("INVALID_ARGUMENT") ||
+            t.includes("Unknown name"))
+        ) {
+          continue;
+        }
+        lastError = `Gemini (${m}): ${t.slice(0, 180)}`;
+        if (
+          res.status === 429 ||
+          t.includes("RESOURCE_EXHAUSTED") ||
+          t.toLowerCase().includes("quota")
+        ) {
+          const quotaErr = new Error(`Quota dépassé pour cette clé (${m}): ${t.slice(0, 150)}`);
+          (quotaErr as any).isQuota = true;
+          throw quotaErr;
+        }
+        throw new Error(lastError);
+      }
+
+      const json: any = await res.json();
+      const candidate = json?.candidates?.[0];
+      const candidateParts = candidate?.content?.parts ?? [];
+      const nonThoughtParts = candidateParts.filter(
+        (p: any) => !p.thought && !p.thought_process && p.type !== "thought",
+      );
+      const effectiveParts = nonThoughtParts.length > 0 ? nonThoughtParts : candidateParts;
+      const text = effectiveParts
+        .map((p: any) => p.text ?? "")
+        .join("")
+        .trim();
+
+      if (!text) {
+        throw new Error(`Réponse vide du modèle ${m}`);
+      }
+      return text;
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+      if (err?.isQuota) throw err;
+    }
+  }
+
+  throw new Error(lastError || `Échec d'appel pour le modèle ${m}`);
+}
+
+/**
+ * Moteur Multi-Modèles Gemini (> 5 modèles en rotation continue)
+ * Effectue une rotation automatique sur la collection des modèles officiels Gemini.
+ * Si un modèle est saturé ou indisponible, il bascule immédiatement sur le modèle suivant.
+ */
+export async function callGeminiMultiModelRotation(
+  apiKey: string,
+  systemPrompt: string,
+  history: ChatTurn[],
+  parts: AiPart[],
+  preferredModel?: string | null,
+): Promise<{ text: string; model: string }> {
+  const cleanKey = (apiKey || "").trim();
+  if (!cleanKey) throw new Error("Clé API Gemini vide");
+
+  const contents = normalizeContentsForGemini(history, parts);
+
+  // Rotation circulaire équilibrée
+  const startIndex = geminiRotationIndex % GEMINI_ROTATION_MODELS.length;
+  geminiRotationIndex = (startIndex + 1) % GEMINI_ROTATION_MODELS.length;
+
+  const candidateModels: string[] = [];
+  const validPreferred = preferredModel ? resolveGeminiModel(preferredModel) : null;
+  if (validPreferred && GEMINI_ROTATION_MODELS.includes(validPreferred)) {
+    candidateModels.push(validPreferred);
+  }
+
+  for (let i = 0; i < GEMINI_ROTATION_MODELS.length; i++) {
+    const candidate = GEMINI_ROTATION_MODELS[(startIndex + i) % GEMINI_ROTATION_MODELS.length];
+    if (!candidateModels.includes(candidate)) {
+      candidateModels.push(candidate);
+    }
+  }
+
+  let lastError = "";
+  for (const model of candidateModels) {
+    try {
+      const raw = await callGeminiSingleModel(cleanKey, systemPrompt, contents, model);
+      if (raw) {
+        return { text: sanitizeAiResponse(raw), model };
+      }
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+      console.warn(
+        `[Gemini Rotation] Modèle '${model}' temporairement indisponible, bascule automatique:`,
+        lastError.slice(0, 100),
+      );
+    }
+  }
+
+  throw new Error(
+    `Tous les modèles Gemini en rotation (${candidateModels.length} modèles essayés) ont échoué: ${lastError}`,
+  );
+}
+
+/** Rétrocompatibilité interne: redirige vers le moteur de rotation multi-modèles Gemini */
+async function callLovableAi(
+  systemPrompt: string,
+  history: ChatTurn[],
+  parts: AiPart[],
+): Promise<string> {
+  const key = process.env.GEMINI_API_KEY || process.env.LOVABLE_API_KEY || "";
+  if (!key) throw new Error("Clé API introuvable pour la rotation");
+  const res = await callGeminiMultiModelRotation(key, systemPrompt, history, parts);
+  return res.text;
+}
+
+/** Rétrocompatibilité : appel Gemini standard via le moteur de rotation */
 async function callGemini(
   apiKey: string,
   systemPrompt: string,
@@ -592,282 +758,11 @@ async function callGemini(
   parts: AiPart[],
   modelName: string = GEMINI_MODEL,
 ): Promise<string> {
-  const cleanKey = (apiKey || "").trim();
-  if (!cleanKey) throw new Error("Clé API Gemini vide");
-
-  const contents = normalizeContentsForGemini(history, parts);
-
-  const standardCandidates = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash"];
-
-  const cleanModelName = resolveGeminiModel(modelName);
-
-  // Model discovery is cached (see fetchAvailableGeminiModels) and only used as
-  // a fallback, so a normal reply costs one single HTTP call.
-  const candidateList = [cleanModelName, ...standardCandidates].filter(Boolean);
-
-  // Two candidates max: the configured model plus one fallback. Each extra model
-  // costs up to AI_TIMEOUT_MS when the provider is slow, which delayed replies.
-  const uniqueModels = [...new Set(candidateList)].slice(0, 2);
-
-  let lastError = "";
-  let discoveryError = "";
-  for (const m of uniqueModels) {
-    // Les modèles Gemini 3.x refusent thinkingConfig -> on n'essaie que sans.
-    const thinkingModes = /^gemini-3/.test(m) ? [false] : [true, false];
-    for (const disableThinking of thinkingModes) {
-      try {
-        const genConfig: Record<string, any> = { temperature: 0.1, maxOutputTokens: 1500 };
-        if (disableThinking) {
-          genConfig.thinkingConfig = { thinkingBudget: 0 };
-        }
-        const body = {
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents,
-          generationConfig: genConfig,
-        };
-
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${cleanKey}`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(AI_TIMEOUT_MS),
-          },
-        );
-
-        if (!res.ok) {
-          const t = await res.text();
-          // If thinkingConfig is unsupported on this model, retry next loop without thinkingConfig
-          if (
-            disableThinking &&
-            (t.includes("thinkingConfig") ||
-              t.includes("INVALID_ARGUMENT") ||
-              t.includes("Unknown name"))
-          ) {
-            continue;
-          }
-          lastError = `Gemini (${m}): ${t.slice(0, 180)}`;
-          // If key is out of quota (429 or RESOURCE_EXHAUSTED), fail immediately to try next key or fallback
-          if (
-            res.status === 429 ||
-            t.includes("RESOURCE_EXHAUSTED") ||
-            t.toLowerCase().includes("quota")
-          ) {
-            console.warn(`[gemini] Key quota exceeded on model ${m}:`, lastError);
-            const quotaErr = new Error(`Quota dépassé pour cette clé (${m}): ${t.slice(0, 150)}`);
-            (quotaErr as any).isQuota = true;
-            throw quotaErr;
-          }
-          console.warn(`[gemini] model ${m} failed:`, lastError);
-          break; // move to next model
-        }
-
-        const json: any = await res.json();
-        const candidate = json?.candidates?.[0];
-        const finish = candidate?.finishReason;
-        const candidateParts = candidate?.content?.parts ?? [];
-        // Filter out thought parts
-        const nonThoughtParts = candidateParts.filter(
-          (p: any) => !p.thought && !p.thought_process && p.type !== "thought",
-        );
-        const effectiveParts = nonThoughtParts.length > 0 ? nonThoughtParts : candidateParts;
-        const text = effectiveParts
-          .map((p: any) => p.text ?? "")
-          .join("")
-          .trim();
-
-        if (finish && finish !== "STOP" && finish !== "MAX_TOKENS") {
-          console.warn("[gemini] finishReason non-STOP:", finish);
-        }
-        if (finish === "MAX_TOKENS") {
-          console.warn("[gemini] réponse tronquée par MAX_TOKENS, longueur:", text.length);
-        }
-        if (!text)
-          throw new Error(`Réponse vide du modèle ${m} (finishReason=${finish ?? "unknown"})`);
-        return sanitizeAiResponse(text);
-      } catch (err: any) {
-        lastError = err.message || String(err);
-      }
-    }
-  }
-
-  // Only when every known model failed do we pay for model discovery.
-  if (!lastError || /not found|not supported|unsupported|404/i.test(lastError)) {
-    const discovery = await fetchAvailableGeminiModels(cleanKey);
-    discoveryError = discovery.ok ? "" : (discovery.error ?? "");
-    const extra = (discovery.models ?? []).filter((m) => !uniqueModels.includes(m)).slice(0, 2);
-    for (const m of extra) {
-      try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${cleanKey}`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              system_instruction: { parts: [{ text: systemPrompt }] },
-              contents,
-              generationConfig: { temperature: 0.1, maxOutputTokens: 1500 },
-            }),
-            signal: AbortSignal.timeout(AI_TIMEOUT_MS),
-          },
-        );
-        if (!res.ok) {
-          lastError = `Gemini (${m}): ${(await res.text()).slice(0, 180)}`;
-          continue;
-        }
-        const json: any = await res.json();
-        const candidateParts = json?.candidates?.[0]?.content?.parts ?? [];
-        const text = candidateParts
-          .filter((p: any) => !p.thought && !p.thought_process && p.type !== "thought")
-          .map((p: any) => p.text ?? "")
-          .join("")
-          .trim();
-        if (text) return sanitizeAiResponse(text);
-      } catch (err: any) {
-        lastError = err?.message || String(err);
-      }
-    }
-  }
-
-  if (discoveryError) throw new Error(discoveryError);
-
-  throw new Error(lastError || "Toutes les tentatives de modèles Gemini ont échoué");
+  const res = await callGeminiMultiModelRotation(apiKey, systemPrompt, history, parts, modelName);
+  return res.text;
 }
 
-/* ---- Lovable AI: rotation sur tous les modèles de chat disponibles ---- */
-
-const LOVABLE_FALLBACK_MODELS = [
-  "google/gemini-3.7-flash",
-  "google/gemini-3.6-flash",
-  "google/gemini-3.5-flash",
-  "google/gemini-3.1-flash-lite",
-  "google/gemini-3-flash-preview",
-  "google/gemini-2.5-flash",
-  "google/gemini-2.5-flash-lite",
-  "google/gemini-2.5-pro",
-];
-
-let lovableModelsCache: { models: string[]; at: number } | null = null;
-let lovableRotationIndex = 0;
-
-async function getLovableModels(apiKey: string): Promise<string[]> {
-  const now = Date.now();
-  if (lovableModelsCache && now - lovableModelsCache.at < 10 * 60 * 1000) {
-    return lovableModelsCache.models;
-  }
-  try {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/models", {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!res.ok) throw new Error(`models ${res.status}`);
-    const json: any = await res.json();
-    const models: string[] = (json?.data ?? [])
-      .filter((m: any) => {
-        const id: string = m?.id ?? "";
-        const input: string[] = m?.modalities?.input ?? [];
-        const output: string[] = m?.modalities?.output ?? [];
-        return (
-          id.startsWith("google/gemini") &&
-          !/embedding|tts|image|transcribe/i.test(id) &&
-          input.includes("text") &&
-          input.includes("image") &&
-          output.length === 1 &&
-          output[0] === "text"
-        );
-      })
-      .map((m: any) => m.id as string)
-      // Modèles les plus récents d'abord.
-      .sort((a: string, b: string) => b.localeCompare(a, "en", { numeric: true }));
-    if (models.length) {
-      lovableModelsCache = { models, at: now };
-      return models;
-    }
-  } catch (e) {
-    console.warn("[Lovable AI] models list error:", e instanceof Error ? e.message : e);
-  }
-  lovableModelsCache = { models: LOVABLE_FALLBACK_MODELS, at: now };
-  return LOVABLE_FALLBACK_MODELS;
-}
-
-async function callLovableAi(
-  systemPrompt: string,
-  history: ChatTurn[],
-  parts: AiPart[],
-): Promise<string> {
-  const key = process.env.LOVABLE_API_KEY;
-  if (!key) throw new Error("LOVABLE_API_KEY missing");
-  const content: any[] = parts.map((p) =>
-    "text" in p
-      ? { type: "text", text: p.text }
-      : {
-          type: "image_url",
-          image_url: { url: `data:${p.inline_data.mime_type};base64,${p.inline_data.data}` },
-        },
-  );
-  const messages: any[] = [
-    { role: "system", content: systemPrompt },
-    ...history.map((t) => ({ role: t.role, content: t.text })),
-    { role: "user", content },
-  ];
-
-  const models = await getLovableModels(key);
-  const start = lovableRotationIndex % models.length;
-  lovableRotationIndex = (start + 1) % models.length;
-
-  let lastError = "";
-  // Speed: never walk the whole catalogue for one reply. A slow/failing model
-  // must be abandoned quickly so the client gets an answer in seconds.
-  const maxModelTries = Math.min(models.length, 2);
-  for (let i = 0; i < maxModelTries; i++) {
-    const model = models[(start + i) % models.length]!;
-    try {
-      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: { "content-type": "application/json", "Lovable-API-Key": key },
-        signal: AbortSignal.timeout(LOVABLE_TIMEOUT_MS),
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: 0.1,
-          max_tokens: 1500,
-          // No internal reasoning: the client must only ever receive the answer.
-          reasoning_effort: "none",
-        }),
-      });
-      if (!res.ok) {
-        const body = (await res.text()).slice(0, 200);
-        lastError = `Lovable AI ${model} ${res.status}: ${body}`;
-        // 429 (rate limit) / 402 (crédits) / 5xx : on tente le modèle suivant.
-        if (res.status === 429 || res.status === 402 || res.status >= 500) {
-          console.warn("[Lovable AI] rotation modèle:", lastError);
-          continue;
-        }
-        // 400/401/403 : inutile de réessayer ce modèle, mais on tente les autres
-        // uniquement pour un 400 (modèle non supporté).
-        if (res.status === 400) continue;
-        throw new Error(lastError);
-      }
-      const json: any = await res.json();
-      const message = json?.choices?.[0]?.message ?? {};
-      // Any reasoning/thinking field is deliberately ignored, never sent to the client.
-      const text = typeof message.content === "string" ? message.content : "";
-      if (!text) {
-        lastError = `Empty Lovable AI response (${model})`;
-        continue;
-      }
-      return sanitizeAiResponse(text);
-    } catch (e) {
-      lastError = e instanceof Error ? e.message : String(e);
-      console.warn("[Lovable AI] erreur modèle", model, lastError);
-    }
-  }
-  // Tous les modèles Lovable ont échoué (quota épuisé) → bascule vers Gemini.
-  throw new Error(lastError || "Tous les modèles Lovable AI ont échoué");
-}
-
-
-/** Generate a reply. Lovable AI first (default), Gemini rotation as fallback. */
+/** Génération de réponse IA principale avec rotation multi-modèles Gemini (> 5 modèles) */
 export async function generateAiReply(opts: {
   userId: string;
   systemPrompt: string;
@@ -881,80 +776,81 @@ export async function generateAiReply(opts: {
 
   const { data: settings } = await supabaseAdmin
     .from("settings")
-    .select("use_lovable_ai_fallback,default_model")
+    .select("default_model")
     .eq("user_id", userId)
     .maybeSingle();
-  const lovableEnabled = settings?.use_lovable_ai_fallback ?? true;
-  const modelToUse = resolveGeminiModel(settings?.default_model);
+  const preferredModel = resolveGeminiModel(settings?.default_model);
 
-  if (lovableEnabled) {
-    try {
-      const raw = await callLovableAi(strictSystemPrompt, history, parts);
-      const sanitized = sanitizeAiResponse(raw);
-      const cleaned = sanitizeReply(sanitized, allowLinks);
-      if (looksTruncated(cleaned)) {
-        const completed = await retryTruncatedReply({
-          userId,
-          systemPrompt,
-          history,
-          parts,
-          currentReply: cleaned,
-          allowLinks,
-        });
-        if (completed) {
-          const completedSanitized = sanitizeAiResponse(completed.raw);
-          return {
-            text: sanitizeReply(completedSanitized, allowLinks),
-            provider: completed.provider,
-          };
-        }
-      }
-      return { text: cleaned, provider: "lovable-ai" };
-    } catch (e) {
-      console.warn("[Lovable AI] fallback vers Gemini:", e instanceof Error ? e.message : e);
-    }
-  }
-
-  // Fallback Gemini : on récupère TOUTES les clés actives, puis on les essaie
-  // une par une (les disponibles d'abord, puis, en dernier recours, celles
-  // encore "en pause" — sinon plus aucune réponse quand Lovable AI est épuisé).
+  // 1. Détection des clés pour le workspace courant
+  const customKeys = getAccountCustomKeys(userId);
   await reviveExpiredGeminiKeys(userId);
   const { data: allKeys } = await supabaseAdmin
     .from("gemini_keys")
     .select("*")
     .eq("user_id", userId);
 
-  if (!allKeys || allKeys.length === 0) {
+  const candidateKeys: { key: string; label: string; id?: string; error_count?: number }[] = [];
+
+  // Clé manuelle du compte/workspace en priorité
+  if (customKeys.gemini_api_key) {
+    candidateKeys.push({ key: customKeys.gemini_api_key, label: "Paramètres Compte" });
+  }
+
+  // Clés actives configurées en base de données pour ce workspace
+  const nowMs = Date.now();
+  const dbKeys = (allKeys as any[] ?? []).filter((k) => k.is_active !== false);
+  const readyKeys = dbKeys
+    .filter((k) => !k.disabled_until || new Date(k.disabled_until).getTime() <= nowMs)
+    .sort((a, b) => (a.error_count ?? 0) - (b.error_count ?? 0));
+  const pausedKeys = dbKeys
+    .filter((k) => k.disabled_until && new Date(k.disabled_until).getTime() > nowMs)
+    .sort((a, b) => (a.error_count ?? 0) - (b.error_count ?? 0));
+
+  for (const k of [...readyKeys, ...pausedKeys]) {
+    if (k.api_key && !candidateKeys.some((c) => c.key === k.api_key)) {
+      candidateKeys.push({
+        key: k.api_key,
+        label: k.label || "Clé DB",
+        id: k.id,
+        error_count: k.error_count,
+      });
+    }
+  }
+
+  // Clé d'environnement système en secours
+  if (process.env.GEMINI_API_KEY && !candidateKeys.some((c) => c.key === process.env.GEMINI_API_KEY)) {
+    candidateKeys.push({ key: process.env.GEMINI_API_KEY, label: "Système Gemini" });
+  }
+
+  if (candidateKeys.length === 0) {
     throw new Error(
-      "Aucune clé API Gemini configurée. Veuillez ajouter votre clé API Gemini dans le menu 'Clés Gemini'.",
+      "Aucune clé API Gemini configurée. Veuillez ajouter votre clé API Gemini dans les Paramètres.",
     );
   }
 
-  const nowMs = Date.now();
-  const activeKeys = (allKeys as any[]).filter((k) => k.is_active !== false);
-  const byOldestUse = (a: any, b: any) => {
-    const ta = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
-    const tb = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
-    return ta - tb;
-  };
-  const ready = activeKeys
-    .filter((k) => !k.disabled_until || new Date(k.disabled_until).getTime() <= nowMs)
-    .sort(byOldestUse);
-  const paused = activeKeys
-    .filter((k) => k.disabled_until && new Date(k.disabled_until).getTime() > nowMs)
-    .sort(byOldestUse);
-  const orderedKeys = [...ready, ...paused, ...(allKeys as any[]).filter((k) => k.is_active === false)];
-
   const keyErrors: string[] = [];
 
-  for (const key of orderedKeys.slice(0, 3)) {
+  // 2. Exécution avec rotation continue des modèles
+  for (const keyObj of candidateKeys) {
     try {
-      const cleanKey = (key.api_key || "").trim();
-      if (!cleanKey) throw new Error(`Clé '${key.label}' vide`);
-      const raw = await callGemini(cleanKey, strictSystemPrompt, history, parts, modelToUse);
-      await markKeyUsed(key.id);
-      const sanitized = sanitizeAiResponse(raw);
+      const cleanKey = keyObj.key.trim();
+      if (!cleanKey) continue;
+
+      const result = await callGeminiMultiModelRotation(
+        cleanKey,
+        strictSystemPrompt,
+        history,
+        parts,
+        preferredModel,
+      );
+
+      if (keyObj.id) {
+        await markKeyUsed(keyObj.id);
+      }
+
+      const sanitized = sanitizeAiResponse(result.text);
       const cleaned = sanitizeReply(sanitized, allowLinks);
+
       if (looksTruncated(cleaned)) {
         const completed = await retryTruncatedReply({
           userId,
@@ -972,21 +868,23 @@ export async function generateAiReply(opts: {
           };
         }
       }
-      return { text: cleaned, provider: `gemini:${key.label}` };
+
+      return { text: cleaned, provider: `gemini-rotation:${result.model}` };
     } catch (e: any) {
       const errMsg = e instanceof Error ? e.message : String(e);
       const isQuota = Boolean(e?.isQuota || errMsg.includes("Quota") || errMsg.includes("429"));
-      console.error("[Gemini] error", key.label, errMsg);
-      keyErrors.push(`${key.label}: ${errMsg}`);
-      await markKeyError(key.id, key.error_count ?? 0, isQuota, e);
+      console.warn(`[Gemini Rotation] Erreur clé ${keyObj.label}:`, errMsg);
+      keyErrors.push(`${keyObj.label}: ${errMsg}`);
+      if (keyObj.id) {
+        await markKeyError(keyObj.id, keyObj.error_count ?? 0, isQuota, e);
+      }
     }
   }
 
-
   throw new Error(
     keyErrors.length
-      ? `Erreur Clé Gemini [${keyErrors.join(" | ")}]. Vérifiez vos clés dans le menu 'Clés Gemini'.`
-      : "Clés API Gemini invalides ou temporairement désactivées. Vérifiez vos clés dans le menu 'Clés Gemini'.",
+      ? `Erreur Moteur Multi-Modèles Gemini [${keyErrors.join(" | ")}]. Vérifiez vos clés dans les Paramètres.`
+      : "Clés API Gemini invalides ou temporairement désactivées.",
   );
 }
 

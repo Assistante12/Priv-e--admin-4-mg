@@ -8,7 +8,8 @@ import {
 } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { auth } from "@/integrations/firebase/config";
+import { signOut as firebaseSignOut, onAuthStateChanged } from "firebase/auth";
 import {
   LayoutDashboard,
   MessageSquare,
@@ -45,11 +46,19 @@ export const Route = createFileRoute("/_authenticated")({
       return { user: null };
     }
     try {
-      const { data, error } = await supabase.auth.getUser();
-      if (error || !data?.user) {
+      if (auth.currentUser) {
+        return { user: auth.currentUser };
+      }
+      const user = await new Promise((resolve) => {
+        const unsubscribe = onAuthStateChanged(auth, (u) => {
+          unsubscribe();
+          resolve(u);
+        });
+      });
+      if (!user) {
         throw redirect({ to: "/auth" });
       }
-      return { user: data.user };
+      return { user };
     } catch (e: any) {
       if (e && typeof e === "object" && ("to" in e || "href" in e || "statusCode" in e)) {
         throw e;
@@ -142,7 +151,7 @@ function AuthenticatedLayout() {
 
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    await firebaseSignOut(auth);
     toast.success("Déconnecté");
     navigate({ to: "/auth" });
   };

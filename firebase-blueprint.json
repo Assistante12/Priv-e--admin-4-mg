@@ -1,0 +1,175 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile in Assistante Virtuelle",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "full_name": { "type": "string" },
+        "active_workspace_id": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Application settings per user/workspace",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "assistance_type": { "type": "string" },
+        "auto_reply_comments": { "type": "boolean" },
+        "default_model": { "type": "string" },
+        "facebook_app_id": { "type": "string" },
+        "facebook_app_secret": { "type": "string" },
+        "gemini_api_key": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["user_id"]
+    },
+    "Prompt": {
+      "title": "Prompt",
+      "description": "AI prompt definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "name": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string" },
+        "is_active": { "type": "boolean" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "user_id", "content"]
+    },
+    "GeminiKey": {
+      "title": "GeminiKey",
+      "description": "Gemini API Key record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "label": { "type": "string" },
+        "api_key": { "type": "string" },
+        "is_active": { "type": "boolean" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "user_id", "api_key"]
+    },
+    "FacebookPage": {
+      "title": "FacebookPage",
+      "description": "Connected Facebook page",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "page_id": { "type": "string" },
+        "page_name": { "type": "string" },
+        "access_token": { "type": "string" },
+        "is_active": { "type": "boolean" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "user_id", "page_id"]
+    },
+    "FacebookMessage": {
+      "title": "FacebookMessage",
+      "description": "Messenger conversation and message history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "page_id": { "type": "string" },
+        "sender_id": { "type": "string" },
+        "message": { "type": "string" },
+        "reply": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "user_id"]
+    },
+    "FacebookComment": {
+      "title": "FacebookComment",
+      "description": "Facebook post comment history",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "page_id": { "type": "string" },
+        "post_id": { "type": "string" },
+        "comment_id": { "type": "string" },
+        "message": { "type": "string" },
+        "reply": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "user_id"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Catalog product",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number" },
+        "description": { "type": "string" },
+        "is_active": { "type": "boolean" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "user_id", "name"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "customer_name": { "type": "string" },
+        "total_amount": { "type": "number" },
+        "status": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "user_id"]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles"
+    },
+    "/settings/{userId}": {
+      "schema": { "$ref": "#/entities/Settings" },
+      "description": "User settings"
+    },
+    "/prompts/{promptId}": {
+      "schema": { "$ref": "#/entities/Prompt" },
+      "description": "User AI prompts"
+    },
+    "/gemini_keys/{keyId}": {
+      "schema": { "$ref": "#/entities/GeminiKey" },
+      "description": "Gemini API keys"
+    },
+    "/facebook_pages/{pageId}": {
+      "schema": { "$ref": "#/entities/FacebookPage" },
+      "description": "Connected Facebook pages"
+    },
+    "/facebook_messages/{messageId}": {
+      "schema": { "$ref": "#/entities/FacebookMessage" },
+      "description": "Messenger messages"
+    },
+    "/facebook_comments/{commentId}": {
+      "schema": { "$ref": "#/entities/FacebookComment" },
+      "description": "Facebook comments"
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Catalog products"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Customer orders"
+    }
+  }
+}

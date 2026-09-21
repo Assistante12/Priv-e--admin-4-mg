@@ -10,7 +10,8 @@ import {
 import { useEffect, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { Bot } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { auth } from "@/integrations/firebase/config";
+import { onAuthStateChanged } from "firebase/auth";
 
 import appCss from "../styles.css?url";
 
@@ -143,13 +144,12 @@ function RootComponent() {
   const router = useRouter();
 
   useEffect(() => {
-    const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event !== "SIGNED_IN" && event !== "SIGNED_OUT" && event !== "USER_UPDATED") return;
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       router.invalidate();
-      if (session) queryClient.invalidateQueries();
+      if (user) queryClient.invalidateQueries();
     });
 
-    return () => data.subscription.unsubscribe();
+    return () => unsubscribe();
   }, [queryClient, router]);
 
   return (

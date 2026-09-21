@@ -126,6 +126,7 @@ function SettingsPage() {
   const [scanningComments, setScanningComments] = useState(false);
   const [showFbConfig, setShowFbConfig] = useState(false);
   const [showFbSecret, setShowFbSecret] = useState(false);
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [showLovableKey, setShowLovableKey] = useState(false);
   const [showSbServiceKey, setShowSbServiceKey] = useState(false);
   const [showSbAnonKey, setShowSbAnonKey] = useState(false);
@@ -135,11 +136,12 @@ function SettingsPage() {
     auto_reply_comments: data?.auto_reply_comments ?? true,
     comment_scan_interval_minutes: data?.comment_scan_interval_minutes ?? 5,
     use_lovable_ai_fallback: data?.use_lovable_ai_fallback ?? true,
-    default_model: data?.default_model || "gemini-3.6-flash",
+    default_model: data?.default_model || "gemini-3.8-flash",
     private_message_link: data?.private_message_link ?? "",
     facebook_app_id: data?.facebook_app_id ?? "",
     facebook_app_secret: data?.facebook_app_secret ?? "",
     facebook_verify_token: data?.facebook_verify_token ?? "",
+    gemini_api_key: (data as any)?.gemini_api_key ?? "",
     lovable_api_key: (data as any)?.lovable_api_key ?? "",
     supabase_project_url:
       (data as any)?.supabase_project_url ??
@@ -165,6 +167,7 @@ function SettingsPage() {
         facebook_app_id: data.facebook_app_id ?? prev.facebook_app_id,
         facebook_app_secret: data.facebook_app_secret ?? prev.facebook_app_secret,
         facebook_verify_token: data.facebook_verify_token ?? prev.facebook_verify_token,
+        gemini_api_key: (data as any).gemini_api_key ?? prev.gemini_api_key,
         lovable_api_key: (data as any).lovable_api_key ?? prev.lovable_api_key,
         supabase_project_url: (data as any).supabase_project_url ?? prev.supabase_project_url,
         supabase_anon_key: (data as any).supabase_anon_key ?? prev.supabase_anon_key,
@@ -261,6 +264,7 @@ function SettingsPage() {
           facebook_app_id: form.facebook_app_id || null,
           facebook_app_secret: form.facebook_app_secret || null,
           facebook_verify_token: form.facebook_verify_token || null,
+          gemini_api_key: form.gemini_api_key || null,
           lovable_api_key: form.lovable_api_key || null,
           supabase_project_url: form.supabase_project_url || null,
           supabase_anon_key: form.supabase_anon_key || null,
@@ -408,7 +412,7 @@ function SettingsPage() {
         </div>
 
         <div>
-          <Label>Modèle IA par défaut</Label>
+          <Label>Modèle IA par défaut (Point de départ)</Label>
           <Select
             value={form.default_model}
             onValueChange={(v) => setForm({ ...form, default_model: v })}
@@ -417,19 +421,26 @@ function SettingsPage() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="gemini-3.6-flash">Gemini 3.6 Flash (recommandé)</SelectItem>
-              <SelectItem value="gemini-flash-latest">Gemini Flash (dernier)</SelectItem>
+              <SelectItem value="gemini-3.8-flash">Gemini 3.8 Flash (Recommandé & Rapide)</SelectItem>
+              <SelectItem value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Ultra-rapide)</SelectItem>
+              <SelectItem value="gemini-2.5-flash">Gemini 2.5 Flash</SelectItem>
+              <SelectItem value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</SelectItem>
               <SelectItem value="gemini-3.5-flash">Gemini 3.5 Flash</SelectItem>
-              <SelectItem value="gemini-pro-latest">Gemini Pro (dernier)</SelectItem>
+              <SelectItem value="gemini-3.6-flash">Gemini 3.6 Flash</SelectItem>
+              <SelectItem value="gemini-flash-latest">Gemini Flash (Dernière version)</SelectItem>
+              <SelectItem value="gemini-2.5-pro">Gemini 2.5 Pro (Raisonnement avancé)</SelectItem>
             </SelectContent>
           </Select>
+          <p className="text-xs text-muted-foreground mt-1">
+            Le modèle de départ utilisé par l'IA. Si la rotation automatique est activée, le système navigue sans interruption entre 8 modèles Gemini différents.
+          </p>
         </div>
 
         <div className="flex items-center justify-between">
           <div>
-            <Label className="text-base">Fallback Lovable AI</Label>
+            <Label className="text-base">Rotation automatique continue des modèles (&gt; 5 modèles)</Label>
             <p className="text-xs text-muted-foreground">
-              Si toutes les clés Gemini sont épuisées, utiliser Lovable AI.
+              En cas de quota atteint ou de lenteur, bascule immédiatement sur le modèle Gemini suivant dans la boucle de rotation.
             </p>
           </div>
           <Switch
@@ -501,30 +512,17 @@ function SettingsPage() {
           <div className="space-y-3 text-sm">
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="rounded-lg bg-black/40 border border-white/5 p-3">
-                <div className="text-xs text-muted-foreground mb-1">Lovable AI</div>
-                <div
-                  className={`font-medium ${
-                    health.lovable.status === "ok"
-                      ? "text-emerald-400"
-                      : health.lovable.status === "exhausted"
-                        ? "text-red-400"
-                        : "text-amber-400"
-                  }`}
-                >
-                  {health.lovable.status === "ok"
-                    ? "Crédit disponible"
-                    : health.lovable.status === "exhausted"
-                      ? "Crédit épuisé"
-                      : health.lovable.status === "error"
-                        ? "Clé invalide"
-                        : "État inconnu"}
+                <div className="text-xs text-muted-foreground mb-1">Moteur Multi-Modèles Gemini</div>
+                <div className="font-medium text-emerald-400 flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                  {health.gemini.modelsInRotation ?? 8} Modèles en rotation continue
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">
                   {health.lovable.detail}
                 </div>
               </div>
               <div className="rounded-lg bg-black/40 border border-white/5 p-3">
-                <div className="text-xs text-muted-foreground mb-1">Clés Gemini</div>
+                <div className="text-xs text-muted-foreground mb-1">Clés Gemini (Manuel & Base)</div>
                 <div
                   className={`font-medium ${
                     health.gemini.status === "ok"
@@ -535,10 +533,11 @@ function SettingsPage() {
                   }`}
                 >
                   {health.gemini.active} opérationnelle(s) / {health.gemini.total}
+                  {health.gemini.hasCustomKey ? " (Clé manuelle active)" : ""}
                   {health.gemini.paused > 0 ? ` (${health.gemini.paused} en pause)` : ""}
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5">
-                  Seuil d'alerte : moins de {health.threshold + 1} clé(s) opérationnelle(s)
+                  Seuil d'alerte : moins de {health.threshold + 1} clé opérationnelle
                 </div>
               </div>
             </div>
@@ -569,7 +568,7 @@ function SettingsPage() {
 
             {!health.alert && (
               <p className="text-xs text-emerald-400/80">
-                Tout est en ordre : Lovable AI et vos clés Gemini peuvent répondre aux clients.
+                Tout est en ordre : Le moteur multi-modèles Gemini et vos clés peuvent répondre sans interruption.
               </p>
             )}
 
@@ -736,192 +735,150 @@ function SettingsPage() {
           </div>
         </div>
 
-        {/* 2. Lovable AI Gateway */}
-        <div className="space-y-4 rounded-xl bg-card/40 p-4 border border-border/60">
-          <div className="flex items-center justify-between">
+        {/* 2. Moteur Multi-Modèles Gemini (> 5 Modèles en Rotation) */}
+        <div className="space-y-4 rounded-xl bg-card/40 p-4 border border-purple-500/30">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-purple-400" />
               <h3 className="text-base font-semibold">
-                2. Lovable AI Gateway (Moteur de secours IA)
+                2. Moteur Multi-Modèles Gemini & Clé API (Rotation continue &gt; 5 modèles)
               </h3>
             </div>
-            {form.lovable_api_key ? (
+            {form.gemini_api_key ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-500">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Voaendy
+                <CheckCircle2 className="h-3.5 w-3.5" /> Clé Gemini Voaray
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
-                Tsy voafaritra
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-400">
+                Mampiasa clé système / Tsy mbola nasiana
               </span>
             )}
           </div>
+
           <p className="text-xs text-muted-foreground">
-            Ny Lovable API Key no miantoka ny famaliana hafatra sy commentaire ho an'ny mpanjifa
-            rehefa lany na tratran'ny quota ny fanalahidy Gemini mahazatra.
+            Ity no misolo tanteraka an'ilay Lovable AI Gateway teo aloha. Isaky ny kaonty noforonina dia afaka mampiditra ny <strong>Gemini API Key</strong> azy manokana eto. Ny rafitra avy eo dia manao rotation foana amin'ireto <strong>modèles Gemini 8 mahery</strong> ireto mba tsy hisy fahatapahana mihitsy ny famaliana hafatra sy commentaire.
           </p>
+
+          {/* Badges des modèles en rotation */}
+          <div className="rounded-lg bg-black/30 border border-white/5 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-purple-300 flex items-center gap-1.5">
+                <Zap className="h-3.5 w-3.5 text-purple-400" /> Modèles ao anaty rotation continue (8 modèles) :
+              </span>
+              <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full">
+                Rotation active
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                "gemini-3.8-flash",
+                "gemini-3.1-flash-lite",
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-3.5-flash",
+                "gemini-3.6-flash",
+                "gemini-flash-latest",
+                "gemini-2.5-pro",
+              ].map((m) => (
+                <span
+                  key={m}
+                  className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-muted-foreground"
+                >
+                  {m}
+                </span>
+              ))}
+            </div>
+          </div>
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium">Lovable API Key (LOVABLE_API_KEY)</Label>
+              <Label className="text-xs font-medium">
+                Gemini API Key an'ity kaonty ity (GEMINI_API_KEY)
+              </Label>
               <button
                 type="button"
-                onClick={() => setShowLovableKey(!showLovableKey)}
+                onClick={() => setShowGeminiKey(!showGeminiKey)}
                 className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
               >
-                {showLovableKey ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                {showLovableKey ? "Afeno" : "Asehoy"}
+                {showGeminiKey ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                {showGeminiKey ? "Afeno" : "Asehoy"}
               </button>
             </div>
             <Input
-              type={showLovableKey ? "text" : "password"}
-              placeholder="ohatra: lov_live_..."
-              value={form.lovable_api_key}
-              onChange={(e) => setForm({ ...form, lovable_api_key: e.target.value })}
+              type={showGeminiKey ? "text" : "password"}
+              placeholder="ohatra: AIzaSy..."
+              value={form.gemini_api_key}
+              onChange={(e) => setForm({ ...form, gemini_api_key: e.target.value })}
             />
+            <p className="text-[11px] text-muted-foreground">
+              Azonao alaina maimaimpoana ao amin'ny Google AI Studio (aistudio.google.com).
+            </p>
           </div>
+
+          <details className="text-xs text-muted-foreground pt-1">
+            <summary className="cursor-pointer hover:text-foreground font-medium flex items-center gap-1 text-[11px]">
+              Option supplémentaire : Clé Lovable de secours (Optionnel)
+            </summary>
+            <div className="space-y-1.5 mt-2 pl-2 border-l border-white/10">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">Lovable API Key (Optionnel)</Label>
+                <button
+                  type="button"
+                  onClick={() => setShowLovableKey(!showLovableKey)}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  {showLovableKey ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  {showLovableKey ? "Afeno" : "Asehoy"}
+                </button>
+              </div>
+              <Input
+                type={showLovableKey ? "text" : "password"}
+                placeholder="ohatra: lov_live_..."
+                value={form.lovable_api_key}
+                onChange={(e) => setForm({ ...form, lovable_api_key: e.target.value })}
+              />
+            </div>
+          </details>
         </div>
 
-        {/* 3. Supabase Database Manuel & OAuth */}
-        <div className="space-y-4 rounded-xl bg-card/40 p-4 border border-emerald-500/30">
+        {/* 3. Firebase Firestore & Auth (Active Base de données) */}
+        <div className="space-y-4 rounded-xl bg-card/40 p-5 border border-primary/40 bg-primary/5">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
-              <Database className="h-5 w-5 text-emerald-500" />
-              <h3 className="text-base font-semibold">3. Supabase & Base de Données (Manuel)</h3>
+              <Database className="h-5 w-5 text-primary" />
+              <h3 className="text-base font-semibold">3. Base de Données & Authentification Firebase</h3>
             </div>
-            {form.supabase_project_url && form.supabase_anon_key ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-500">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Supabase Manuel voaray
-              </span>
-            ) : sbStatus.isConnected ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-500">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Supabase OAuth voaray
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-500">
-                <AlertTriangle className="h-3.5 w-3.5" /> Tsy mbola misy
-              </span>
-            )}
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-medium text-emerald-500 border border-emerald-500/30">
+              <CheckCircle2 className="h-4 w-4" /> Firebase Firestore & Auth mavitrika
+            </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Ampidiro mivantana eto ny adiresy URL sy ny fanalahidy avy amin'ny Supabase Dashboard
-            anao (Settings &gt; API) mba hampiasan'ity kaonty ity ny tahiry sy ny database manokana.
+            Ny angon-drakitra rehetra (base de données) sy ny kaonty (authentification) dia mifandray mivantana sy tehirizina ao amin'ny Google Firebase Firestore sy Firebase Auth.
           </p>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Supabase Project URL (SUPABASE_URL)</Label>
-              <Input
-                placeholder="ohatra: https://abcdefghijklm.supabase.co"
-                value={form.supabase_project_url}
-                onChange={(e) => setForm({ ...form, supabase_project_url: e.target.value })}
-              />
+          <div className="grid gap-3 sm:grid-cols-2 text-xs">
+            <div className="p-3 rounded-lg bg-background/80 border border-border">
+              <span className="text-muted-foreground block text-[11px]">Firebase Project ID</span>
+              <span className="font-mono font-medium text-foreground">effortless-rainfall-gf38q</span>
             </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium">Supabase Project ID (ID tetikasa)</Label>
-              <Input
-                placeholder="ohatra: abcdefghijklm"
-                value={form.supabase_project_id}
-                onChange={(e) => setForm({ ...form, supabase_project_id: e.target.value })}
-              />
+            <div className="p-3 rounded-lg bg-background/80 border border-border">
+              <span className="text-muted-foreground block text-[11px]">Firestore Database ID</span>
+              <span className="font-mono font-medium text-foreground text-[11px] truncate block">
+                ai-studio-agencevirtuelle-4025dff0-0f16-4acf-aae5-334da4c38db5
+              </span>
             </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-medium">
-                  Supabase Anon / Public Key (SUPABASE_PUBLISHABLE_KEY)
-                </Label>
-                <button
-                  type="button"
-                  onClick={() => setShowSbAnonKey(!showSbAnonKey)}
-                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                >
-                  {showSbAnonKey ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                  {showSbAnonKey ? "Afeno" : "Asehoy"}
-                </button>
-              </div>
-              <Input
-                type={showSbAnonKey ? "text" : "password"}
-                placeholder="ohatra: eyJhbGciOi..."
-                value={form.supabase_anon_key}
-                onChange={(e) => setForm({ ...form, supabase_anon_key: e.target.value })}
-              />
+            <div className="p-3 rounded-lg bg-background/80 border border-border">
+              <span className="text-muted-foreground block text-[11px]">Système d'authentification</span>
+              <span className="font-medium text-emerald-500 flex items-center gap-1.5 mt-0.5">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Firebase Auth (Email / Mot de passe / Google)
+              </span>
             </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-medium">
-                  Supabase Service Role Key (SUPABASE_SERVICE_ROLE_KEY)
-                </Label>
-                <button
-                  type="button"
-                  onClick={() => setShowSbServiceKey(!showSbServiceKey)}
-                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                >
-                  {showSbServiceKey ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                  {showSbServiceKey ? "Afeno" : "Asehoy"}
-                </button>
-              </div>
-              <Input
-                type={showSbServiceKey ? "text" : "password"}
-                placeholder="ohatra: eyJhbGciOi... (Secret Service Role)"
-                value={form.supabase_service_role_key}
-                onChange={(e) => setForm({ ...form, supabase_service_role_key: e.target.value })}
-              />
+            <div className="p-3 rounded-lg bg-background/80 border border-border">
+              <span className="text-muted-foreground block text-[11px]">Synchro temps réel</span>
+              <span className="font-medium text-emerald-500 flex items-center gap-1.5 mt-0.5">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Firestore Cloud Rules activées
+              </span>
             </div>
-          </div>
-
-          {/* Option OAuth Supabase */}
-          <div className="pt-2 border-t border-border/40">
-            <details className="text-xs">
-              <summary className="cursor-pointer text-muted-foreground hover:text-foreground font-medium py-1">
-                Safidy fanampiny : Mampifandray amin'ny alalan'ny Supabase OAuth
-              </summary>
-              <div className="mt-3 space-y-3 pl-2">
-                <p className="text-muted-foreground">
-                  Raha tianao dia azonao ampifandraisina mivantana amin'ny bokotra OAuth ihany koa
-                  ny Supabase :
-                </p>
-                {sbStatus.isConnected ? (
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={connectSupabase}
-                      disabled={sbConnecting}
-                      className="text-xs"
-                    >
-                      <RefreshCw
-                        className={`h-3.5 w-3.5 mr-1.5 ${sbConnecting ? "animate-spin" : ""}`}
-                      />
-                      Resynchroniser OAuth
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleDisconnectSupabase}
-                      className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                    >
-                      Déconnecter OAuth
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    onClick={connectSupabase}
-                    disabled={sbConnecting}
-                    size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white"
-                  >
-                    {sbConnecting ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Database className="h-4 w-4 mr-2" />
-                    )}
-                    Connecter via Supabase OAuth
-                  </Button>
-                )}
-              </div>
-            </details>
           </div>
         </div>
 

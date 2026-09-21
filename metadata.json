@@ -1,6 +1,6 @@
 {
   "name": "Assistante Virtuelle",
-  "description": "Automatisez vos réponses Messenger et commentaires Facebook avec l'IA (Gemini + Lovable AI).",
+  "description": "Automatisez vos réponses Messenger et commentaires Facebook avec l'IA multi-modèles Gemini en rotation continue.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

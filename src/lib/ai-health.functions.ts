@@ -1,11 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireWorkspaceAuth } from "@/lib/workspace-middleware";
+import { getAccountCustomKeys } from "@/lib/account-keys.server";
+import { GEMINI_ROTATION_MODELS } from "@/lib/ai-engine.server";
 
 /**
- * Surveillance des quotas IA (Lovable AI + clés Gemini).
- * Utilisé par la page Paramètres pour afficher une alerte quand le crédit
- * Lovable AI est bas/épuisé ou quand trop de clés Gemini sont en pause,
- * avec une suggestion de clé de secours.
+ * Surveillance des quotas et de l'état du Moteur Multi-Modèles Gemini (> 5 modèles).
+ * Utilisé par les paramètres pour assurer la surveillance de la rotation.
  */
 
 export type AiQuotaHealth = {
@@ -18,6 +18,9 @@ export type AiQuotaHealth = {
     active: number;
     paused: number;
     status: "ok" | "low" | "exhausted" | "none";
+    hasCustomKey: boolean;
+    modelsInRotation: number;
+    modelsList: string[];
   };
   /** Seuil d'alerte : nombre minimal de clés Gemini opérationnelles. */
   threshold: number;
@@ -33,38 +36,10 @@ const GEMINI_ACTIVE_THRESHOLD = 1;
 export const getAiQuotaHealth = createServerFn({ method: "GET" })
   .middleware([requireWorkspaceAuth])
   .handler(async ({ context }): Promise<AiQuotaHealth> => {
-    // --- 1. État du crédit Lovable AI (sonde légère sur le catalogue) ---
-    let lovable: AiQuotaHealth["lovable"] = {
-      status: "unknown",
-      detail: "Vérification impossible",
-    };
-    try {
-      const key = process.env.LOVABLE_API_KEY;
-      if (!key) {
-        lovable = { status: "error", detail: "Clé Lovable AI absente" };
-      } else {
-        const res = await fetch("https://ai.gateway.lovable.dev/v1/models", {
-          headers: { "Lovable-API-Key": key },
-          signal: AbortSignal.timeout(8000),
-        });
-        if (res.ok) {
-          lovable = { status: "ok", detail: "Crédit Lovable AI disponible" };
-        } else if (res.status === 402 || res.status === 429) {
-          lovable = {
-            status: "exhausted",
-            detail: "Crédit Lovable AI épuisé ou quota dépassé",
-          };
-        } else if (res.status === 401 || res.status === 403) {
-          lovable = { status: "error", detail: "Clé Lovable AI invalide" };
-        } else {
-          lovable = { status: "unknown", detail: `Réponse inattendue (${res.status})` };
-        }
-      }
-    } catch {
-      lovable = { status: "unknown", detail: "Passerelle Lovable AI injoignable" };
-    }
+    // --- 1. Vérification des clés Gemini (Manuel Compte + DB + Système) ---
+    const customKeys = getAccountCustomKeys(context.userId);
+    const hasCustomKey = Boolean(customKeys.gemini_api_key && customKeys.gemini_api_key.trim().length > 0);
 
-    // --- 2. État des clés Gemini de l'utilisateur ---
     const { data: keys } = await context.supabase
       .from("gemini_keys")
       .select("id, label, error_count, disabled_until, is_active, last_used_at")
@@ -78,61 +53,56 @@ export const getAiQuotaHealth = createServerFn({ method: "GET" })
     );
     const paused = enabled.length - ready.length;
 
-    let geminiStatus: AiQuotaHealth["gemini"]["status"] = "ok";
-    if (all.length === 0) geminiStatus = "none";
-    else if (ready.length === 0) geminiStatus = "exhausted";
-    else if (ready.length <= GEMINI_ACTIVE_THRESHOLD) geminiStatus = "low";
+    const totalOperationalKeys = ready.length + (hasCustomKey ? 1 : 0) + (process.env.GEMINI_API_KEY ? 1 : 0);
 
-    // --- 3. Suggestion de clé de secours (la plus fiable disponible) ---
+    let geminiStatus: AiQuotaHealth["gemini"]["status"] = "ok";
+    if (totalOperationalKeys === 0) geminiStatus = "exhausted";
+    else if (totalOperationalKeys <= GEMINI_ACTIVE_THRESHOLD) geminiStatus = "low";
+
+    // --- 2. État de la rotation Multi-Modèles ---
+    const lovable: AiQuotaHealth["lovable"] = {
+      status: "ok",
+      detail: `Moteur Gemini Multi-Modèles actif (${GEMINI_ROTATION_MODELS.length} modèles en rotation)`,
+    };
+
+    // --- 3. Suggestion de clé / modèle ---
     let backupKeyLabel: string | null = null;
-    const backup =
-      ready
+    if (hasCustomKey) {
+      backupKeyLabel = "Clé personnalisée du compte";
+    } else {
+      const backup = ready
         .slice()
         .sort(
           (a, b) =>
             (a.error_count ?? 0) - (b.error_count ?? 0) ||
             new Date(a.last_used_at ?? 0).getTime() - new Date(b.last_used_at ?? 0).getTime(),
         )[0] ?? null;
-    if (backup) backupKeyLabel = backup.label || "Clé sans nom";
+      if (backup) backupKeyLabel = backup.label || "Clé DB";
+      else if (process.env.GEMINI_API_KEY) backupKeyLabel = "Clé système Gemini";
+    }
 
-    // --- 4. Alerte globale ---
+    // --- 4. Alertes ---
     let alertMessage: string | null = null;
     let suggestion: string | null = null;
 
-    if (lovable.status === "exhausted" && (geminiStatus === "exhausted" || geminiStatus === "none")) {
-      alertMessage =
-        "Crédit Lovable AI épuisé ET aucune clé Gemini opérationnelle : l'IA ne peut plus répondre.";
-      suggestion =
-        "Ajoutez immédiatement une nouvelle clé Gemini dans la page « Clés API » pour rétablir les réponses automatiques.";
-    } else if (lovable.status === "exhausted") {
-      alertMessage = "Crédit Lovable AI épuisé : l'IA fonctionne uniquement sur vos clés Gemini.";
-      suggestion = backupKeyLabel
-        ? `Rechargez le crédit Lovable AI ou gardez la clé « ${backupKeyLabel} » comme clé de secours principale.`
-        : "Ajoutez une clé Gemini de secours dans la page « Clés API ».";
-    } else if (geminiStatus === "exhausted") {
-      alertMessage =
-        "Toutes vos clés Gemini sont en pause (quota dépassé) : seul Lovable AI répond actuellement.";
-      suggestion =
-        "Ajoutez une nouvelle clé Gemini de secours dans la page « Clés API » ou attendez la fin de la pause des clés existantes.";
+    if (totalOperationalKeys === 0) {
+      alertMessage = "Aucune clé Gemini active : le moteur multi-modèles ne peut pas répondre.";
+      suggestion = "Saisissez votre clé Gemini dans les options paramètres pour activer la rotation.";
     } else if (geminiStatus === "low") {
-      alertMessage = `Quota Gemini faible : ${ready.length} seule clé opérationnelle sur ${enabled.length}.`;
-      suggestion = backupKeyLabel
-        ? `Ajoutez une clé Gemini supplémentaire ; la clé « ${backupKeyLabel} » sert actuellement de clé de secours.`
-        : "Ajoutez une clé Gemini supplémentaire dans la page « Clés API ».";
-    } else if (lovable.status === "error") {
-      alertMessage = "La clé Lovable AI semble invalide.";
-      suggestion = backupKeyLabel
-        ? `Vérifiez la configuration Lovable AI ; la clé Gemini « ${backupKeyLabel} » assure le secours.`
-        : "Vérifiez la configuration Lovable AI.";
+      alertMessage = `1 seule clé Gemini active pour alimenter les ${GEMINI_ROTATION_MODELS.length} modèles en rotation.`;
+      suggestion = "Vous pouvez ajouter une clé de secours supplémentaire pour garantir une disponibilité maximale.";
     }
 
     return {
       lovable,
       gemini: {
-        total: enabled.length,
-        active: ready.length,
+        total: enabled.length + (hasCustomKey ? 1 : 0),
+        active: ready.length + (hasCustomKey ? 1 : 0),
         paused,
         status: geminiStatus,
+        hasCustomKey,
+        modelsInRotation: GEMINI_ROTATION_MODELS.length,
+        modelsList: GEMINI_ROTATION_MODELS,
       },
       threshold: GEMINI_ACTIVE_THRESHOLD,
       alert: alertMessage !== null,

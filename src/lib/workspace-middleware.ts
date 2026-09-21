@@ -1,15 +1,15 @@
 import { createMiddleware } from "@tanstack/react-start";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireFirebaseAuth } from "@/integrations/firebase/auth-middleware";
 
 /**
- * Middleware "workspace" : identique à requireSupabaseAuth, mais `context.userId`
+ * Middleware "workspace" : identique à requireFirebaseAuth, mais `context.userId`
  * devient l'identifiant du workspace actif (scope des données).
  * Le workspace personnel a le même id que l'utilisateur, donc les données
  * existantes continuent de fonctionner sans aucune migration de contenu.
  * `context.authUserId` reste l'identifiant réel du compte connecté.
  */
 export const requireWorkspaceAuth = createMiddleware({ type: "function" })
-  .middleware([requireSupabaseAuth])
+  .middleware([requireFirebaseAuth])
   .server(async ({ next, context }) => {
     const authUserId = context.userId;
     let scope = authUserId;

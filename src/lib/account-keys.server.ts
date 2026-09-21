@@ -5,6 +5,7 @@ export interface AccountCustomKeys {
   facebook_app_id?: string | null;
   facebook_app_secret?: string | null;
   facebook_verify_token?: string | null;
+  gemini_api_key?: string | null;
   lovable_api_key?: string | null;
   supabase_project_url?: string | null;
   supabase_anon_key?: string | null;
@@ -70,6 +71,9 @@ export function applyKeysToEnv(keys: AccountCustomKeys) {
   }
   if (keys.lovable_api_key) {
     process.env["LOVABLE_API_KEY"] = keys.lovable_api_key;
+  }
+  if (keys.gemini_api_key) {
+    process.env["GEMINI_API_KEY"] = keys.gemini_api_key;
   }
   if (keys.facebook_app_id) {
     process.env["FACEBOOK_APP_ID"] = keys.facebook_app_id;
@@ -153,6 +157,7 @@ export function getAccountCustomKeys(userId?: string): AccountCustomKeys {
     facebook_app_id: accountKeys.facebook_app_id || global.facebook_app_id || process.env["FACEBOOK_APP_ID"] || null,
     facebook_app_secret: accountKeys.facebook_app_secret || global.facebook_app_secret || process.env["FACEBOOK_APP_SECRET"] || null,
     facebook_verify_token: accountKeys.facebook_verify_token || global.facebook_verify_token || process.env["FACEBOOK_VERIFY_TOKEN"] || null,
+    gemini_api_key: accountKeys.gemini_api_key || global.gemini_api_key || process.env["GEMINI_API_KEY"] || null,
     lovable_api_key: accountKeys.lovable_api_key || global.lovable_api_key || process.env["LOVABLE_API_KEY"] || null,
     supabase_project_url: accountKeys.supabase_project_url || global.supabase_project_url || process.env["SUPABASE_URL"] || null,
     supabase_anon_key: accountKeys.supabase_anon_key || global.supabase_anon_key || process.env["SUPABASE_PUBLISHABLE_KEY"] || null,
@@ -184,6 +189,7 @@ export async function saveAccountCustomKeys(
     ...(clean(newKeys.facebook_app_id) !== undefined ? { facebook_app_id: clean(newKeys.facebook_app_id) } : {}),
     ...(clean(newKeys.facebook_app_secret) !== undefined ? { facebook_app_secret: clean(newKeys.facebook_app_secret) } : {}),
     ...(clean(newKeys.facebook_verify_token) !== undefined ? { facebook_verify_token: clean(newKeys.facebook_verify_token) } : {}),
+    ...(clean(newKeys.gemini_api_key) !== undefined ? { gemini_api_key: clean(newKeys.gemini_api_key) } : {}),
     ...(clean(newKeys.lovable_api_key) !== undefined ? { lovable_api_key: clean(newKeys.lovable_api_key) } : {}),
     ...(clean(newKeys.supabase_project_url) !== undefined ? { supabase_project_url: clean(newKeys.supabase_project_url) } : {}),
     ...(clean(newKeys.supabase_anon_key) !== undefined ? { supabase_anon_key: clean(newKeys.supabase_anon_key) } : {}),
