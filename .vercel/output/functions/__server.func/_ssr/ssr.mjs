@@ -1,6 +1,7 @@
 import { t as __exportAll } from "./rolldown-runtime-D7D4PA-g.mjs";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 //#region node_modules/.nitro/vite/services/ssr/index.js
 var lastCapturedError;
 var TTL_MS = 5e3;
@@ -30,35 +31,32 @@ var account_keys_server_exports = /* @__PURE__ */ __exportAll({
 	initAccountKeys: () => initAccountKeys,
 	saveAccountCustomKeys: () => saveAccountCustomKeys
 });
-var DATA_DIR = path.join(process.cwd(), "data");
+var DATA_DIR = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NOW_REGION || false) ? path.join(os.tmpdir(), "agence-virtuelle-data") : path.join(process.cwd(), "data");
 var STORE_PATH = path.join(DATA_DIR, "account-keys.json");
+var memoryStore = {
+	global: {},
+	accounts: {}
+};
 function readStore() {
 	try {
-		if (!fs.existsSync(STORE_PATH)) return {
-			global: {},
-			accounts: {}
-		};
+		if (!fs.existsSync(STORE_PATH)) return memoryStore;
 		const raw = fs.readFileSync(STORE_PATH, "utf-8");
 		const parsed = JSON.parse(raw);
-		return {
+		memoryStore = {
 			global: parsed.global || {},
 			accounts: parsed.accounts || {}
 		};
-	} catch (e) {
-		console.warn("[AccountKeys] Failed to read store file:", e);
-		return {
-			global: {},
-			accounts: {}
-		};
+		return memoryStore;
+	} catch {
+		return memoryStore;
 	}
 }
 function writeStore(store) {
+	memoryStore = store;
 	try {
 		if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 		fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), "utf-8");
-	} catch (e) {
-		console.warn("[AccountKeys] Failed to write store file:", e);
-	}
+	} catch {}
 }
 /**
 * Apply keys into process.env so third-party SDKs and client factories
@@ -219,7 +217,7 @@ function renderErrorPage() {
 }
 var serverEntryPromise;
 async function getServerEntry() {
-	if (!serverEntryPromise) serverEntryPromise = import("./server-PdCEgQXm.mjs").then((n) => n.t).then((m) => m.default ?? m);
+	if (!serverEntryPromise) serverEntryPromise = import("./server-D9pwzi9_.mjs").then((n) => n.t).then((m) => m.default ?? m);
 	return serverEntryPromise;
 }
 async function normalizeCatastrophicSsrResponse(response) {

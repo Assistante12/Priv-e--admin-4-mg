@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 
 export interface AccountCustomKeys {
   facebook_app_id?: string | null;
@@ -13,7 +14,16 @@ export interface AccountCustomKeys {
   supabase_project_id?: string | null;
 }
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const isServerless = Boolean(
+  process.env.VERCEL ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.NOW_REGION ||
+    process.env.NODE_ENV === "production",
+);
+
+const DATA_DIR = isServerless
+  ? path.join(os.tmpdir(), "agence-virtuelle-data")
+  : path.join(process.cwd(), "data");
 const STORE_PATH = path.join(DATA_DIR, "account-keys.json");
 
 interface KeysStore {
@@ -21,31 +31,35 @@ interface KeysStore {
   accounts: Record<string, AccountCustomKeys>;
 }
 
+// In-memory fallback if disk is completely unavailable
+let memoryStore: KeysStore = { global: {}, accounts: {} };
+
 function readStore(): KeysStore {
   try {
     if (!fs.existsSync(STORE_PATH)) {
-      return { global: {}, accounts: {} };
+      return memoryStore;
     }
     const raw = fs.readFileSync(STORE_PATH, "utf-8");
     const parsed = JSON.parse(raw);
-    return {
+    memoryStore = {
       global: parsed.global || {},
       accounts: parsed.accounts || {},
     };
-  } catch (e) {
-    console.warn("[AccountKeys] Failed to read store file:", e);
-    return { global: {}, accounts: {} };
+    return memoryStore;
+  } catch {
+    return memoryStore;
   }
 }
 
 function writeStore(store: KeysStore) {
+  memoryStore = store;
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), "utf-8");
-  } catch (e) {
-    console.warn("[AccountKeys] Failed to write store file:", e);
+  } catch {
+    // Silently ignore disk write issues in restricted serverless runtimes
   }
 }
 
