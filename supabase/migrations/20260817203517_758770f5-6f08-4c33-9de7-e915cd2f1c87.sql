@@ -1,0 +1,4 @@
+ALTER TABLE public.scheduled_posts
+  ADD COLUMN IF NOT EXISTS page_ids TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS media JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS fb_post_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
