@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { firestoreClient } from "@/integrations/firebase/firestore-adapter";
+import { auth } from "@/integrations/firebase/config";
 
 export type NewOrderAlert = {
   id: string;
@@ -9,25 +10,21 @@ export type NewOrderAlert = {
 };
 
 /**
- * Écoute en temps réel les nouvelles commandes de l'utilisateur connecté et
- * expose un compteur (badge) + la dernière commande (bannière).
+ * Real-time order alerts using Firestore.
  */
 export function useNewOrderAlerts() {
   const [count, setCount] = useState(0);
   const [latest, setLatest] = useState<NewOrderAlert | null>(null);
 
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let channel: any = null;
     let cancelled = false;
 
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      const authUserId = data?.user?.id;
+      const authUserId = auth.currentUser?.uid;
       if (!authUserId || cancelled) return;
 
-      // Le scope des commandes est le workspace actif (le workspace personnel
-      // porte le même identifiant que le compte).
-      const { data: profile } = await supabase
+      const { data: profile } = await firestoreClient
         .from("profiles")
         .select("active_workspace_id")
         .eq("id", authUserId)
@@ -35,13 +32,13 @@ export function useNewOrderAlerts() {
       const userId = profile?.active_workspace_id ?? authUserId;
       if (cancelled) return;
 
-      channel = supabase
+      channel = firestoreClient
         .channel(`orders-alerts-${userId}`)
         .on(
           "postgres_changes",
           { event: "INSERT", schema: "public", table: "orders", filter: `user_id=eq.${userId}` },
-          (payload) => {
-            const row = payload.new as Record<string, unknown>;
+          (payload: any) => {
+            const row = (payload.new || {}) as Record<string, unknown>;
             setCount((c) => c + 1);
             setLatest({
               id: String(row["id"] ?? ""),
@@ -56,7 +53,7 @@ export function useNewOrderAlerts() {
 
     return () => {
       cancelled = true;
-      if (channel) supabase.removeChannel(channel);
+      if (channel) firestoreClient.removeChannel(channel);
     };
   }, []);
 

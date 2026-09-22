@@ -1,25 +1,18 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { auth } from "@/integrations/firebase/config";
+import { onAuthStateChanged } from "firebase/auth";
 
 /**
- * Retourne true seulement quand une session Supabase est disponible côté client.
- * Évite d'appeler les server functions protégées sans jeton (401).
+ * Returns true when a Firebase session/user is available client-side.
  */
 export function useHasSession(): boolean {
-  const [hasSession, setHasSession] = useState(false);
+  const [hasSession, setHasSession] = useState<boolean>(() => Boolean(auth.currentUser));
 
   useEffect(() => {
-    let active = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (active) setHasSession(Boolean(data.session));
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setHasSession(Boolean(user));
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setHasSession(Boolean(session));
-    });
-    return () => {
-      active = false;
-      sub.subscription.unsubscribe();
-    };
+    return () => unsubscribe();
   }, []);
 
   return hasSession;

@@ -84,14 +84,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         name: "description",
         content:
-          "Automatisez vos réponses Messenger et commentaires Facebook avec l'IA (Gemini + Lovable AI).",
+          "Automatisez vos réponses Messenger et commentaires Facebook avec l'IA Google AI Studio (Gemini) et Firebase Firestore.",
       },
       { name: "author", content: "Assistante Virtuelle" },
       { property: "og:title", content: "Assistante Virtuelle — IA pour Facebook Messenger" },
       {
         property: "og:description",
         content:
-          "Automatisez vos réponses Messenger et commentaires Facebook avec l'IA (Gemini + Lovable AI).",
+          "Automatisez vos réponses Messenger et commentaires Facebook avec l'IA Google AI Studio (Gemini) et Firebase Firestore.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -99,7 +99,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         name: "twitter:description",
         content:
-          "Automatisez vos réponses Messenger et commentaires Facebook avec l'IA (Gemini + Lovable AI).",
+          "Automatisez vos réponses Messenger et commentaires Facebook avec l'IA Google AI Studio (Gemini) et Firebase Firestore.",
       },
       {
         property: "og:image",

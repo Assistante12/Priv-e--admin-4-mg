@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { firestoreClient } from "@/integrations/firebase/firestore-adapter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,7 @@ function UtilisateursPage() {
 
   useEffect(() => {
     const invalidate = () => qc.invalidateQueries({ queryKey: ["admin-users-overview"] });
-    const channel = supabase
+    const channel = firestoreClient
       .channel("admin-users-overview")
       .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, invalidate)
       .on(
@@ -54,7 +54,7 @@ function UtilisateursPage() {
       )
       .subscribe();
     return () => {
-      supabase.removeChannel(channel);
+      firestoreClient.removeChannel(channel);
     };
   }, [qc]);
 

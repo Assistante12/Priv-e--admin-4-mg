@@ -30,7 +30,6 @@ import {
   MAX_VIDEO_BYTES,
   type VideoUploadSession,
 } from "@/lib/video-tus-upload";
-import { supabase } from "@/integrations/supabase/client";
 
 import {
   Sparkles,
