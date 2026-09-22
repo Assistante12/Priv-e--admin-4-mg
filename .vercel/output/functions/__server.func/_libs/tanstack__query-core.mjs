@@ -2663,10 +2663,9 @@ var QueryCache = class extends Subscribable {
 	* ```
 	*/
 	remove(query) {
-		const queryInMap = this.#queries.get(query.queryHash);
-		if (queryInMap) {
+		if (this.#queries.get(query.queryHash) === query) {
 			query.destroy();
-			if (queryInMap === query) this.#queries.delete(query.queryHash);
+			this.#queries.delete(query.queryHash);
 			this.notify({
 				type: "removed",
 				query
